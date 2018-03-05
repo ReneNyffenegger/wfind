@@ -1,0 +1,7 @@
+
+http://volkerschatz.com/
+
+transform '$_ .= "foo.html";'
+
+output
+

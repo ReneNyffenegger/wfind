@@ -1,0 +1,40 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]; then
+    echo "usage: dogfind <search terms> [ -<wfind options ...> ]"
+    exit
+fi
+
+function search_escape()
+{
+    perl -e '$_="'"$1"'"; s/[^ a-zA-Z0-9\-.~'"'"'!*()]/sprintf("%%%02X",ord($&))/ge; s/ +/+/g; print $_;'
+}
+
+while [ $# -gt 0 -a "${1:0:1}" != "-" ]; do
+    if [[ "$1" =~ ^[^a-zA-Z0-9] ]]; then
+        break
+    fi
+    searchstr="$searchstr${searchstr:+ }+${1// /.}"
+    wfterms[termind]="$1"
+    termind=$((termind+1))
+    shift
+done
+
+if [ "$1" = "-" ]; then
+    shift
+fi
+
+wfopts="$*"
+
+searchstr=`search_escape "$searchstr"`
+
+# echo $searchstr
+
+dogurl="http://www.dogpile.com/search/web?q=$searchstr&qsi=[0-5]1"
+
+# echo $dogurl
+
+wfind "$dogurl" -depth 1 -url 'http://ccs.dogpile.com/ClickHandler.ashx' \
+    -transform 's/^.*?\bru=//; s/&.*$//; s/%([0-9a-f]{2})/chr(hex($1))/ieg;' \
+    \| -depth 0 "${wfterms[@]}" $wfopts
+

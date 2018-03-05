@@ -1,0 +1,12 @@
+# non-malicious sites which we still may want to exclude from recursion, such
+# as the internet archive and search engine caches
+archive.li
+archive.is
+archive.fo
+archive.ec
+http://web.archive.org/web/
+webcache.googleusercontent.com
+http://www.exalead.com/search/web/cached/
+http://www.webcitation.org/
+savedwebhistory.org
+https://ixquick-proxy.com/do/spg/proxy?

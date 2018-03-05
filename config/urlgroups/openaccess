@@ -1,0 +1,18 @@
+# Open access journals and preprint servers, suitable for filtering google
+# scholar results.  Bear in mind that google scholar also links to full text on
+# various institutional servers, so you may be better off testing against the
+# paypers and paten URL groups.  Also consider "-url edu -o -url gov -o -url
+# ac.uk" or "-type application/postscript -o -type application/pdf".
+
+arxiv.org
+archives-ouvertes.fr
+emis.ams.org
+hal.inria.fr
+# http://www.ams.org/tran/      #  only some from here are free
+plos.org
+mdpi.com
+hindawi.com
+acrwebsite.org
+eprint.iacr.org
+marketingpower.com
+unescap.org

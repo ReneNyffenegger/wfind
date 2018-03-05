@@ -1,0 +1,27 @@
+# Sites offering academic publications for sale, to discard from google scholar
+# results.  Some allow full text access for members, and your employer may have
+# access for some via IP address filtering, so comment out as needed.
+
+sciencedirect.com
+scientific.net
+springerlink.com
+ieeexplore.ieee.org
+royalsocietypublishing.org
+agu.org
+earth-prints.org
+dl.acm.org
+ipap.jp
+aps.org
+aip.org
+opticsinfobase.org
+iopscience.iop.org
+jstor.org
+physiology.org
+publish.csiro.au
+journals.cambridge.org
+onlinelibrary.wiley.com
+adsabs.harvard.edu
+pubs.acs.org
+tandfonline.com
+oxfordjournals.org
+

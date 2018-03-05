@@ -1,0 +1,1594 @@
+
+=pod
+
+=head1 NAME
+
+B<wfind> - find and grep for the web
+
+
+=head1 SYNOPSIS
+
+B<wfind> I<URLs...> [--] [I<options>] I<tests>
+
+B<scav> I<script> I<URLs...> [--] I<other arguments>
+
+
+=head1 DESCRIPTION
+
+B<wfind> is a generic web search spider.  In a syntax similar to the UNIX
+B<find> (1) command, it allows you to search internet documents, recursively
+following hyperlinks.  Given the appropriate Perl modules or/and external
+programs, it can process HTML, plain text, PDF, PostScript, RTF, troff and MS
+Office formats.  B<wfind> can also search local directories in a similar way as
+C<find ... -exec grep ...> would.
+
+B<wfind>'s applications include postprocessing search engine results
+(especially of search-it-yourself site searches), checking web pages against
+dead links, and full text search of manual pages or other documentation.  It
+supports regular expressions, phonetic search, logical operators and proximity
+search.
+
+B<scav> is a symlink to the B<wfind> script that enables a different, very
+experimental interface.  Its first argument is a script that allows finer
+control over where the spider goes and the implementation of more complex tasks
+than the B<wfind> command line.  See L</SCAV> at the bottom of this manual page
+for more information.
+
+
+=head1 START URLS
+
+The first argument(s) of B<wfind> are the URLs to start from.  These can be
+C<file://>, C<http(s)://> or C<ftp(s)://> URLs or relative or absolute paths.
+The paths accepted have some restrictions to avoid ambiguities with test
+expressions (see below).  Absolute paths on UNIX systems should best start with
+C<//> for that reason, and relative paths must start with C<./> .
+
+More than one URL can be given in a single argument by using ranges and
+sequences, as in shell glob patterns and in the arguments of B<curl>(1).  A
+range consists of two endpoints (numerical or string of letters) separated by a
+hyphen, enclosed in square brackets.  A set of URLs is formed by substituting
+each number or string in the range.  An optional increment can be given by a
+colon followed by a number before the closing bracket.  A sequence is a
+comma-separated list of strings in curly braces, each of which will be
+substituted to form a URL.
+
+The pseudo-scheme C<search:> causes B<wfind> to query a search engine with
+search terms derived from its search expression.  These URLs are of the form
+C<search:engine>, where the available engines are listed (among other things)
+by the B<-status> option.  Only word / glob tests (see below) can be used to
+generate search terms from, and only if they are at the top level of the search
+expression.
+
+The pseudo-URL C<-> (a single hyphen) enables B<wfind> to read URLs from
+standard input, which allows generating them with a different program.
+
+The marker C<--> (two hyphens) can be used to separate URLs from test
+expressions and options.  It must occur only once on the command line and
+forces arguments to its left to be interpreted as URLs and those to its right
+as tests or options.
+
+
+=head1 SEARCH EXPRESSIONS
+
+B<wfind> supports several ways to specify what words, phrases or expressions to
+search for.  The most important difference is between those which are
+word-oriented and those which are not.  The former are intended for searching
+for phrases in human-readable text.  Their search patterns are split into
+words of letters and digits, and all non-word characters serve as word
+separators and are silently discarded.  (This tolerance makes it easier to copy
+and paste search phrases.)  Characters with accents and diaereses are converted
+to their base characters before comparison, both in the pattern and in the
+text.  This is similar to the behaviour of web search engines.
+Non-word-oriented tests are performed on the "raw" text, which may still have
+sequences of spaces converted to single spaces and characters and punctuation
+converted to their ASCII equivalent (see L</Regular expressions> and L</Unicode>
+below for details).
+
+Search expressions are specified by a punctuation character indicating the
+type of match, the phrase to be searched for, and optionally the same indicator
+character followed by flags.  The following search expressions are supported:
+
+
+=head2 Words and glob patterns
+
+The simplest match type are glob patterns.  Their indicator character is an
+equals sign and is optional if no flags are given.  The wildcard characters
+C<?> and C<*> can be used to denote a single word character and an arbitrary
+number of them, respectively.  (Remember tho prepend them with a backslash or
+to enclose them in single quotes to prevent the shell from interpreting them.)
+Character ranges or multiple subpatterns enclosed in braces are not allowed by
+B<wfind>.  If the pattern contains no wildcard characters, it is just a search
+for a string of words, which can be given without any markup in one
+command-line argument to B<wfind>.  Two examples:
+
+    "these three words"
+
+    =Wor\*=I
+
+In the first example, double quotes were used to tell the shell to pass all
+three words as one command-line argument.  B<wfind> does not get to see the
+quotes.  The second example searches for all capitalised words starting with
+"Wor".  Glob pattern searches are case insensitive by default, but the I<I>
+flag makes them case sensitive.
+
+The other supported flag is I<v>, the verbatim flag.  It turns the word search
+into a tolerant substring search which is not word-oriented.  The "tolerance"
+of the search consists in that spaces are allowed before and after all non-word
+characters, and that unicode characters compare as equal to their base
+character (unlike in verbatim regular expressions, see below).  Wildcard
+characters still stand for word (letter or digit) characters only.
+
+
+=head2 Regular expressions
+
+Regular expressions are a mainstay of several UNIX utilities and of Perl, so it
+is no surprise that B<wfind> supports them too.  Their indicator character is a
+slash C</>, and the required syntax is that of Perl regular expressions.  The
+given regex is used largely unmodified, so unfiltered input from untrusted
+sources should not be passed to B<wfind> as a regex.
+
+B<wfind> takes regexes to be case insensitive by default.  The flag I<I> given
+after the concluding slash makes them case sensitive.  Regex searches are never
+word oriented, so will be applied to the complete text of a web page, not to
+individual words.  In particular, punctuation will be kept and can be matched.
+Unless the I<v> (verbatim) flag is given, some simplifications will still be
+made before the regex match: accented and similarly modified characters are
+converted to their base character, and exotic punctuation converted to the
+ASCII equivalent (see L</Unicode> below for details).  So the first of the
+following regexes will match the German name of the city of Munich, but the
+second will not match the phrase "cause celebre" in french texts:
+
+    /Munchen/I
+
+    "/\bcause celebre\b/v"
+
+B<wfind> will always add the I<s> flag to the Perl regular expression it uses
+so that newline characters are treated as any kind of white space.  The
+characters C<^> and C<$> denoting the beginning and end of the string should
+not be used in the regex, because the document may be matched part by part (see
+L</How wfind processes documents> below).  The regex may contain additional
+slashes between the two delimiters, which are matched and should not be
+escaped.
+
+
+=head2 Levenshtein similarity
+
+The Levenshtein distance between two words is the number of one-character
+modifications, additions or removals it takes to convert one into the other.
+B<wfind> supports approximate searches for words within a given Levenshtein
+distance.  The indicator character is a tilde I<~>, and the concluding tilde
+can be followed by a specification of the maximum tolerated distance.  This can
+either be a number (the distance itself) or a percentage.  The latter will be
+interpreted as the ratio of the tolerated distance relative to the maximum
+possible distance, which is the maximum of the lengths of the two words being
+compared.  If no maximum distance is given, a relative distance of 20% is used.
+Some examples:
+
+    '~levenstine~3'
+
+    '~can wizards spell~30%'
+
+The first search just matches the correctly spelt "Levenshtein".  (Insertion of
+the h, removal of the last e, insertion of the last e.)  The second example
+searches for a sequence of three words.  The 30% threshold is applied to each
+word comparison individually.
+
+Like the other searches, Levenshtein equivalence is case insensitive by
+default.  To switch on case sensitivity, the I<I> flag has to be added before
+or after the distance specification.
+
+
+=head2 Phonetic equivalence
+
+Several schemes exist to encode words according to their pronunciation by
+English-speakers.  B<wfind> can use Double Metaphone, Metaphone or Soundex and
+loads the corresponding Perl module when available.  When B<wfind> finds search
+words prepended with a dollar sign C<$>, it converts them to their phonetic
+codes and searches for sequences of words which have the same codes.  Some
+words have no phonetic code (B<wfind> aborts with an error when told to search
+for such a word), and many different words have the same code.  The single
+characters C<?> and C<*> can be used as wildcards which match any word.  The
+search for phonetically-equivalent words takes no flags, so the dollar sign
+need not be repeated after the word(s) (but may be).  Remember to escape the
+dollar sign from the shell, as demonstrated in these examples:
+
+    \$word
+
+    '$three * mice$'
+
+
+=head2 Operators
+
+Several search expressions next to each other are combined with the logical
+conjunction (AND) by default.  To specify a different logical function, you can
+use the following operators, which are compatible with the L<find(1)> command.
+They are listed in decreasing order of precedence.
+
+=over
+
+=item B<( )>
+
+Parentheses force precedence.  Remember to escape these from the shell.
+
+=item B<!>, B<-not>
+
+Logical negation.
+
+=item B<-a>, B<-and>
+
+Logical conjunction.  This is the default if two tests are found side by side
+without an explicit operator.
+
+=item B<-o>, B<-or>
+
+Logical disjunction.
+
+=back
+
+In addition to the operators above, the option B<-require> allows defining
+generalised logical operators.  It is described in the L</Subexpression
+options> section below.
+
+
+=head1 PIPE SECTIONS
+
+There are situations where you might want to use B<wfind> in several stages.
+For instance, you may first want to sift through a list of URLs based on one
+set of keywords and then search through links from the hits using different
+criteria.  Or you may want to search through external links from local
+documentation pages which themselves match some criteria.  B<wfind>'s pipe
+sections provide the means to do that.
+
+Pipe sections are notionally similar to pipes of commands on your shell
+command-line.  Just as the shell feeds the output of one command into the input
+of the following command in a pipe, B<wfind> uses the hits of the tests of one
+pipe section as the starting URLs of the following one.  Successive pipe
+sections are separated by the pipie character, which has to be escaped from the
+shell:
+
+B<wfind> I<URLs> I<test1> \| I<test2> \| I<test3>
+
+This would be the syntax for three pipe sections.  See L</Advanced usage> below
+for examples.
+
+Not only can different pipe sections have different search criteria, they can
+also differ in some options.  By default, options given for the first pipe
+section will be reused in the following section(s), but explicitly given
+options for that section will override them, and will stay active for the
+following sections.  Not all options are scoped by pipe section.  Those that
+are mostly concern B<wfind>'s behaviour for recursively following links, see
+L</Pipe section options> below.
+
+
+=head1 OPTIONS
+
+B<wfind>'s options (comand-line switches) determine the details of its
+behaviour.  Test options prepended to test expressions cause the tests to be
+applied to something other than a document's contents.  Other options influence
+the following of hyperlinks, reporting of results and other things.
+
+Options may be uniquely abbreviated.  Boolean-valued options take no arguments;
+they are set to true by the presence of their command-line switch, and to false
+by prepending the option name with "no".  They default to false unless
+documented otherwise below.
+
+Test options are part of the boolean expression which determines if a document
+will be reported as a result.  Other options set parameters whose scope may be
+global, the current pipe section, or the subexpression in which they are given.
+Options scoped by pipe section serve as the default for the following pipe
+sections too, so they need not be repeated, but may have to be reset
+explicitly.
+
+
+=head2 Alphabetical summary
+
+The following table gives a brief description of all command-line switches in
+alphabetical order.  The character in the second column gives the type of the
+option: O for operators, T for test options, G for global options, P for pipe
+section options and L for locally scoped options (subexpression options).
+Operators are described in the L</Operators> section above; a detailed
+description for the other options can be found in the corresponding section
+below.
+
+ --             G   End of URL arguments (must not occur later)
+ -and, -a       O   And operator
+ -asplain       P   Parse all ASCII files as plain text
+ -charnear      L   Proximity requirement in characters
+ -decompress    G   Store decompressed result documents in current directory
+ -depth         P   Recursion depth
+ -download      G   Store result documents in current directory
+ -downxform     G   Transform URL to save file name
+ -echo          G   Echo arguments and exit
+ -exif          T   Test EXIF metainformation in image or audio files
+ -false         T   Always false
+ -follow        P   HTML tags containing links to follow
+ -gdepth        G   Global recursion depth
+ -header        T   Test HTML, PDF or OLE document header
+ -holdoff       G   Holdoff time between downloads
+ -httpdirs      P   Try to heuristically identify HTTP directory listings
+ -httpheader    T   Test HTTP header
+ -inlineframes  P   Treat frames as part of the document in which they appear
+ -linkafter     P   Follow only hyperlinks after a test matches
+ -linkbefore    P   Follow only hyperlinks before a test matches
+ -linksto       T   Test hyperlink URLs
+ -linktags      P   HTML tags relevant for -linksto
+ -linktext      P   Follow only hyperlinks with the given link text
+ -localfile     T   Test existence of local file name created from URL
+ -max           P   Maximal number of results
+ -maxsize       G   Maximal download size
+ -modified      T   Test Last-Modified time
+ -name          T   Test document name
+ -nostart       P   Disqualify start URLs
+ -not           O   Negation operator
+ -or, -o        O   Or operator
+ -pessimistic   P   Discard ambiguous results
+ -plainurls     P   Extract non-hyperlinked URLs
+ -print         G   What to output
+ -redirects     G   Maximum number of HTTP redirects
+ -require       L   Generalised logical operator
+ -rsize         T   Test file size after download
+ -rtype         T   Test MIME type after download
+ -samedomain    P   Follow hyperlinks to same domain only
+ -silent        G   No warnings
+ -size          T   Test file size as reported by server
+ -status        G   Print capabilities and exit
+ -symlinks      P   Follow symbolic links in filesystem
+ -slaves        G   Number of slave processes to spawn
+ -timeout       G   Connection timeout
+ -transform     P   Transform result URLs
+ -true          T   Always true
+ -type          T   Test MIME type given by server
+ -uagent        G   User agent string
+ -unrestricted  P   Follow hyperlinks from files to WWW
+ -url           T   Test document URL
+ -urlgroup      T   Test document URL against URL group
+ -userholdoff   G   Apply holdoff time to user input URLs
+ -verbose       G   More detailed output
+ -version       G   Print wfind version
+ -while         P   Follow hyperlinks while expression is true
+ -wordnear      L   Proximity requirement in words
+
+
+=head2 Test options
+
+When B<wfind> encounters a search expression on its own, it searches for it in
+a document's content.  To search for documents with a certain URL, size or
+headers, you can use the following options.  Many of them are followed by
+parameters detailing what to search for in the data they indicate.  For those
+that take search expressions as parameters, only primitive expressions are
+allowed, that is without operators.  The test options can be combined with
+content tests and each other using operators (see L</Operators> above).
+
+=over
+
+=item B<-exif> I<keyexpression>:I<valueexpression>
+
+True if a file with embedded EXIF metadata has an EXIF tag matching
+I<keyexpression> with a value matching I<valueexpression>.  Typically image
+files from digital cameras and sometimes audio files have embedded EXIF data,
+but this test is not useful for text document formats.  For files without EXIF
+data, or if no tag matches I<keyexpression>, the result is undecided, and the
+value of the complete test expression may depend on B<-pessimistic>.  If
+multiple tags match I<keyexpression>, one matching value is enough to make the
+result true (OR semantics).
+
+=item B<-false>
+
+Always false.
+
+=item B<-header> I<keyexpression>:I<valueexpression>
+
+True if a document header with a key matching I<keyexpression> has a value
+matching I<valueexpression>.  This test applies only to HTML, PDF and MS OLE
+documents.  For other documents, or if no key matches I<keyexpression>, the
+result is undecided, and the value of the complete test expression may depend
+on whether B<-pessimistic> is given.  If several headers have matching keys,
+one matching value is enough to make this test true (OR semantics).
+
+=item B<-httpheader> I<keyexpression>:I<valueexpression>
+
+True if a HTTP header received from the server has a key matching
+I<keyexpression> and a value matching I<valueexpression>.  B<wfind> will
+usually try to decide this test using a HEAD request which only retrieves the
+HTTP headers, and put off downloading the document.  If no header key matches
+I<keyexpression>, the result is undecided, and the value of the complete test
+expression may depend on whether B<-pessimistic> is given.  If several headers
+have matching keys, one matching value is enough to make this test true (OR
+semantics).
+
+=item B<-linksto> I<expression>
+
+True if one of the hyperlinks extracted from the document matches
+I<expression>.  Also applies to URLs in the text if B<-plainurls> is given.
+
+=item B<-localfile> I<Perlcode>
+
+True if a local file with the name constructed by the I<Perlcode> from the URL
+exists.  The current URL is passed in the C<$_> variable, and some other
+variables are also available.  The Perl features the code fragment can use are
+restricted.  See B<-transform> below for details.  The file name to stat is
+returned in C<$_>.  If C<$_> is the empty string or undefined, the file is
+assumed not to exist, forcing the test result to be false.  To force a true
+result, return "/", as the root directory always exists.  This option allows to
+download serialised resources such as blog articles until a page that has
+already been downloaded is encountered.
+
+=item B<-modified> [C<+>|C<->]I<time>
+
+Compare modification time from the "Last-Modified" field of the HTTP header.
+The result is true for an older document if C<+> is given, for a newer document
+if C<-> is given, or a document of the specified modification date otherwise.
+I<time> may be given as a plain number followed by C<m> or C<d> or as a time
+and date.  The former is interpreted as the age of the document in minutes or
+days; the suffix C<d> is optional.  If a date is given, it is parsed using
+Date::Parse::str2time; see L<Date::Parse> for the allowed syntax.
+
+B<wfind> will usually try to decide this test using a HEAD request which only
+retrieves the HTTP headers, and put off downloading the document.  Sadly, most
+servers simply return the current time and date as the "Last-Modified" time.
+B<wfind> detects this, and marks the test as undecided.  The result of the
+complete test expression may then depend on whether B<-pessimistic> is
+given.  All comparisons of the last-modified time are performed with a
+tolerance of 3 minutes in either direction to allow for variations of the
+clocks of different computers on the web.  For local files, the comparison is
+exact.
+
+=item B<-name> I<expression>
+
+Apply test I<expression> to document name (file name or last part of the URL).
+This test does not require downloading the document.
+
+=item B<-rsize> [C<+>|C<->]I<number>[C<k>|C<M>|C<G>]
+
+Compare size of downloaded file.  The size is determined after decompression.
+If the given number of bytes is prepended by C<+>, the result is true for files
+at least as large, in the case of C<-> for files at most as large, otherwise
+the size has to match exactly.  The suffixes C<k>, C<M> or C<G> (case
+insensitive) allow abbreviating kilobytes, megabytes and gigabytes.  (That's
+informatics kilobytes etc., which are powers of 2, not marketing kilobytes
+etc.)
+
+=item B<-rtype> I<expression>
+
+Apply test I<expression> to the MIME type of the document.  The MIME type is
+determined using the L<File::MimeInfo::Magic> module or the C<file> command and
+is therefore consistent across servers.
+
+=item B<-size> [C<+>|C<->]I<number>[C<k>|C<M>|C<G>]
+
+Compare size of remote file as given by the Content-Length HTTP header with
+given number in bytes.  If prepended by C<+>, the result is true for files at
+least as large, in the case of C<-> for files at most as large, otherwise the
+size has to match exactly.  The suffixes C<k>, C<M> or C<G> (case insensitive)
+allow abbreviating kilobytes, megabytes and gigabytes.  (That's informatics
+kilobytes etc., which are powers of 2, not marketing kilobytes etc.)  B<wfind>
+will usually try to decide this test using a HEAD request which only retrieves
+the HTTP headers, and put off downloading the document.  
+
+=item B<-true>
+
+Always true.
+
+=item B<-type> I<expression>
+
+Apply test I<expression> to the MIME type of the document as given by the
+Content-Type HTTP header.  B<wfind> will usually try to decide this test using
+a HEAD request which only retrieves the HTTP headers, and put off downloading
+the document.  Unfortunately different servers can have different opinions on
+the MIME type of a given document format.  The MIME type should usually allow
+for compression (ie give the uncompressed MIME type), but only does that if the
+server can discern the enclosed format.  The similar B<-rtype> test downloads
+the document to determine the MIME type on the local host, which provides
+consistency across servers.
+
+=item B<-url> I<expression>
+
+Apply test I<expression> to document URL.  This test does not require
+downloading the document.
+
+=item B<-urlgroup> I<name>
+
+Test if the document URL is part of the URL group I<name> (see L</"THE
+CONFIGURATION DIRECTORY"> below).  This test does not require downloading the
+document.
+
+=back
+
+Two more options exist which are related to tests: B<-linktext> and
+B<-while>.  Both have tests as their arguments which determine which links
+are followed.  They may occur only once in every pipe section and are listed
+among the L</Pipe section options> below.
+
+
+=head2 Global options
+
+=over
+
+=item B<-->
+
+This is not really an option.  It serves as a separator between URL arguments
+and test / option arguments in cases when they could be confused.  It may occur
+only before all other tests and options.
+
+=item B<-decompress>
+
+Store those documents which match the criteria to the current directory, after
+decompression or other decoding.  This option is enabled by default.  If it is
+given explicitly, it implies B<-download>, for backwards compatibility.
+
+=item B<-download>
+
+Store those documents which match the criteria to the current directory.  If
+B<-decompress> is enabled (the default), documents are decompressed before
+storing them.  Otherwise they are stored exactly as they were received from the
+server.  The output file name is the same as the file name part of the URL.  If
+it already exists, a number is appended before the file extension.  There may
+be a race condition if two instances of wfind run in the same directory and
+simultaneously try to store a file with the same name, in which case one may
+overwrite the other.
+
+=item B<-downxform> I<Perlcode>
+
+Expression transforming the result URLs into a file name to save the downloaded
+document to.  This implies B<-download>.  The I<Perlcode> should operate on
+C<$_>.  If the resulting C<$_> is the empty string or undefined or an error
+occurs, B<wfind> will construct a file name based on the URL as usual.  For
+other variables available to the code fragment and restrictions on Perl
+features, see B<-transform> below.
+
+=item B<-echo>
+
+Perform no search, just print the start URLs, options and search expressions.
+Both the options specified on the command line and the default options are
+printed.  Useful to check B<wfind>'s interpretation of your command line.
+
+If the B<-verbose> option is also given, both every URL argument and all its
+corresponding canonicalised URLs are printed.  (There is only one unless the
+argument contained a glob pattern.)  Without B<-verbose>, at most the first
+three URLs are printed for a glob pattern, and only the canonicalised form is
+printed for single URLs.  The URL arguments are always printed in the order in
+which they were given on the command line.
+
+=item B<-gdepth> I<number>
+
+Global maximum search depth.  The search depth is 0 for every URL given on the
+command line and is increased by one for every hyperlink followed or (for
+directory searches) every directory hierarchy.  The search is continued until
+either the maximum depth of this pipe section (see B<-depth>) or the global
+maximum depth  have been exceeded.  B<wfind>'s depth counting differs from that
+of the L<find(1)> command in that it regards files as at the same depth as the
+directory where they are located.  So a maximum depth of 0 for a directory
+search may return files from the directory given on the command line.
+
+=item B<-holdoff> [C<+>|C<->]I<seconds>
+
+Set the delay between successive retrievals from the same server.  The sign
+determines how the delay applies to HTTP and FTP retrievals.  For C<+>, the
+delay is imposed between any successive retrievals from the same server.
+Otherwise, it applies for each protocol separately, i.e. one HTTP and one FTP
+retrieval may be in progress simultaneously.  The C<-> sign allows the delay
+for HTTP to be overridden by the Crawl-Delay entry of the robots.txt file of
+the server if present.  The default holdoff is "-10", 10 seconds with separate
+accounting and override allowed.
+
+The holdoff time is normally applied only to recursively visited HTTP resources
+on the same server.  It is not applied to multiple URLs on the same server
+given on the command line (unless B<-userholdoff> is active), to HTTP HEAD
+requests or to retrievals of robots.txt.
+
+=item B<-maxsize> I<number>[C<k>|C<M>|C<G>]
+
+Set the maximum size of retrievals, in bytes.  A useful safeguard to avoid
+wasting bandwith and processing time if links to source archives or other large
+data abound in the vicinity of your search, and/or if a server has flaky MIME
+type reporting.  The suffixes C<k>, C<M> or C<G> (case insensitive) allow
+abbreviating kilobytes, megabytes and gigabytes.  (That's informatics kilobytes
+etc., which are powers of 2, not marketing kilobytes etc.)  Unlike B<-size>,
+this does not disqualify a larger document.  The given number of bytes will
+still be retrieved, and all tests performed as usual.  The default is no limit.
+
+=item B<-print> I<list>
+
+Determine what should be printed out for each result of the last pipe section.
+The argument is a list of keywords separated by commas and/or spaces.  If
+spaces are used, the list has to be quoted so that it remains a single
+command-line argument.  The following keywords are allowed, and will be printed
+in the following order:
+
+    all     all of the below
+    url     URL (including C<file://> for local files)
+    furl    file name or URL (this is the default)
+    type    MIME type
+    size    size of the document
+    time    modification time
+    trace   chain of of hyperlinked URLs which led to the result
+    linkprops  indices and linktexts of hyperlinks leading to the result
+
+The C<type> and C<size> output data may come from different sources depending
+on whether the document in question had to be retrieved.  B<wfind> will
+perform a HEAD request if necessary to obtain the size or MIME type from the
+HTTP headers but will not retrieve the document just for printing the size
+or type.  If the document was retrieved to perform content tests, on the other
+hand, the actual size will be reported, and the MIME type will be determined by
+B<wfind> if the L<File::MimeInfo::Magic> module or the C<file> program are
+available.  For the output format of these fields, seee below under L</Result
+reporting>.
+
+=item B<-redirects> I<number>
+
+Set the maximum number of redirects for the Perl WWW library to follow.  If not
+given, the default is left unchanged (probably 7; see L<LWP::UserAgent> for
+your version's default).
+
+=item B<-silent>
+
+Suppress all warnings.  Because B<wfind> performs only one pass over its
+command-line arguments, this option will not affect warnings related to
+arguments which precede it.
+
+=item B<-slaves>
+
+Number of slave processes to use for downloading and testing documents.  Using
+several slaves makes B<wfind> robust against being stalled by slow servers.
+Creating the slave processes and communicating with them requires some
+low-level Perl functions inspired by UNIX systems and may therefore cause
+portability trouble.  If you experience unexpected behaviour, try setting
+B<-slaves> to 0, so that B<wfind> works sequentially and does not fork.
+
+=item B<-status>
+
+Print which document formats and tests B<wfind> can support with the Perl
+modules and external programs installed on your system.  With B<-verbose>,
+indicates which modules or programs are used to process which formats and
+suggests what you can install to enable additional features.  If other options
+or URLs are given, they are ignored.  B<wfind> tries to find modules and
+external programs on each run and therefore can use them as they become
+available.  See L</Perl modules and external programs> below for details.
+
+=item B<-timeout> I<seconds>
+
+Set the timeout for the Perl WWW library.  If not given, the default is left
+unchanged (possibly 180 seconds; see L<LWP::UserAgent> for your version's
+default).
+
+=item B<-uagent>
+
+Set user agent string.  This is how B<wfind> identifies itself to the server at
+every HTTP request.
+
+=item B<-userholdoff>
+
+Also apply holdoff time to URLs that came from user input, on the command line
+or as scavenger start URLs.  Normally the holdoff is ignored for such URLs.
+
+=item B<-verbose>
+
+Enables verbose error reporting, such as messages when a document could not be
+retrieved or parsed.  Overrides B<-silent> if that option is also given,
+irrespective of the order.  Also makes the output of B<-echo> or B<-status>
+more detailed; see there.
+
+=item B<-version>
+
+Print B<wfind> version and exit.
+
+=back
+
+
+=head2 Pipe section options
+
+These options are scoped by pipe section.  They are mostly about how to parse
+documents and which links to follow.  Options of one pipe section continue to
+apply to the following sections unless they are explicitly reset.
+
+=over
+
+=item B<-asplain>
+
+Treat non-binary documents as plain text when searching the content.  This
+allows for instance to search HTML documents for the occurrence specific tags,
+such as C<img>.  The extraction of link URLs is unaffected by this switch, so
+B<wfind> will still recognise and follow HTML hyperlinks.  See B<-plainurls>
+for how to follow plain-text URLs.
+
+=item B<-depth> I<number>
+
+Maximum search depth for this pipe section.  The search depth is 0 for every
+URL given on the command line or resulting from the previous pipe section and
+is increased by one for every hyperlink followed or (for directory searches)
+every directory hierarchy.  The search is continued until either the maximum
+depth of this pipe section or the global maximum depth (see B<-gdepth>) have
+been exceeded.  B<wfind>'s depth counting differs from that of the L<find(1)>
+command in that it regards files as at the same depth as the directory where
+they are located.  So a maximum depth of 0 for a directory search may return
+files from the directory given on the command line.
+
+=item B<-follow> [C<+>|C<->]I<list>
+
+Tag attributes to use for following hyperlinks from HTML documents.  The
+argument is a list of tag-attribute pairs of the form C<tag.attribute>
+separated by commas and/or spaces.  (If you use spaces, put the list in quotes;
+it must be contained in one command-line argument.)  The list of allowed tags
+and attributes is generated at runtime using the L<HTML::Tagset> module.  You
+can view the default setting and a list of allowed attributes with the
+following commands, respectively:
+
+    wfind -echo
+    wfind -echo -follow all
+
+If only one attribute of a tag can contain a URL, it is sufficient to give the
+tag name, without a dot and attribute name.  In addition to the explicit
+tag/attribute pairs, the keyword C<all> is allowed to select all of them, as
+demonstrated above.  If the list is prepended with a plus sign, the given
+tag/attribute pairs are added to the list, with a minus sign they are removed,
+and otherwise the list is set to exactly the given tags/attributes.
+
+If the B<-inlineframes> option is active (as it is by default), some link tags
+are treated as part of the document rather than as external links.  If you want
+to extract all links from a document, you might want to disable that option.
+
+=item B<-httpdirs>
+
+Employ a heuristic to tell if a HTML page retrieved by HTTP is a directory
+listing.  Basically, all C<E<lt>a href=...E<gt>> and C<E<lt>link href=...E<gt>>
+hyperlinks are compared to the concatenation of the base URL with their
+respective link text.  If only a small number (currently 1) of them link
+somewhere else, excepting links to the same page or the parent directory, the
+page is taken for a directory listing.  This option is enabled by default, but
+can be disabled by B<-nohttpdirs> in case HTML pages are mistakenly considered
+directories.
+
+=item B<-inlineframes>
+
+Treat link URLs from the HTML tags (attributes) frame (src), iframe (src),
+layer (src), ilayer (src) and meta (content) as part of the current document.
+The search depth is unaffected by these links, and they are retrieved without a
+holdoff delay.  These link URLs are considered start URLs if the original
+document was, and are not considered links of that document because they are
+already handled internally.  If the list of link tags specified with B<-follow>
+does not include some of the tags above, they are ignored even if this option
+is active.  This option is active by default.
+
+=item B<-linkafter> I<...>
+
+Follow hyperlinks only after text in the document matches a search expression.
+Only a content test is allowed as the argument; a more complex test expression
+must be enclosed in parentheses.  If B<-linkbefore> is also present, hyperlinks
+between successive matches of the B<-linkafter> expression and the
+B<-linkbefore> expression are valid.
+
+=item B<-linkbefore> I<...>
+
+Follow hyperlinks only after text in the document matches a search expression.
+Only a content test is allowed as the argument; a more complex test expression
+must be enclosed in parentheses.  If B<-linkafter> is also present, hyperlinks
+between successive matches of the B<-linkafter> expression and the
+B<-linkbefore> expression are valid.
+
+=item B<-linktags> [C<+>|C<->]I<list>
+
+Tag attributes to take into account for B<-linksto> tests.  The argument format
+is exactly the same as for B<-follow> above.
+
+=item B<-linktext> I<...>
+
+Follow only links whose text matches a search expression.  The following test
+expression may not contain test options (see L</Test options>), only content
+tests and operators.  If multiple tests are given, they have to be enclosed in
+parentheses, or only the first will be assigned to B<-linktext>.  See also
+B<-while>, which allows more freedom but has slightly different semantics.
+
+=item B<-max> I<n>
+
+Maximum number of results to obtain for this pipe section.  Note that due to
+varying server reply times, the actual results obtained may not be
+deterministic.
+
+=item B<-nostart>
+
+Do not consider start URLs of the current section as candidates for search
+results, only follow their links.  The start URLs of the first pipe section are
+those given on the command line; the start URLs of the other pipe sections are
+the result URLs of the previous section.  The negative of B<-nostart> is
+B<-nonostart>.
+
+=item B<-pessimistic>
+
+Be pessimistic about test result.  By default, B<wfind> will give URLs the
+benefit of doubt if the result of a test cannot be decided.  For instance, the
+user may search for web pages which have been modified recently, or which have
+certain values for a given HTML header.  But many servers return bogus
+Last-Modified dates, and not all web pages may have the required HTML header.
+B<wfind> includes the URL in the result list if the test cannot be decided for
+such reasons.  Note that it is not the value of the individual B<-modified> or
+B<-header> test which will be true by default, but that of the complete test
+expression.  So for instance it does not matter whether an undecidable test is
+negated; and if its value is irrelevant due to the values of other tests, the
+result is unchanged.
+
+B<-pessimistic> changes that default.  If the test result for an URL is
+undecided, it will now be discarded.  The switch also applies to B<-while>
+tests, when B<wfind> decides whether to continue following links.
+
+=item B<-plainurls>
+
+Follow non-hyperlink URLs.  Normally, B<wfind> will follow hyperlinks in HTML,
+PDF and MS OLE documents.  This switch causes any URL appearing in the document
+to be treated as a link.  Among others, this allows following links from plain
+text and other document formats which do not have hyperlinks.  B<-linktext>
+tests are ignored for these links, they are always followed.  To avoid
+misidentifying URLs, only links with the protocols which B<wfind> parses
+(http(s) and ftp(s)) are recognised; this may affect B<-linksto> tests, for
+which an URL from a hyperlink can have any protocol.  (Workaround: use an
+additional content test.)
+
+=item B<-samedomain>
+
+Follow hyperlinks only within a domain.  Subdomains are treated as equal, so
+links from C<en.wikipedia.org> to C<de.wikipedia.org> will be followed, for
+instance.  This option defaults to true in the first pipe section, unless most
+of the given start URLs refer to the site of a well-known search engine,
+when it defaults to false.  See B<-while> and the B<-url> test for more
+fine-grained control over which links are followed.
+
+=item B<-symlinks>
+
+Follow symbolic links when searching local directories.  This affects both
+links to directories (which are followed recursively) and links to files (which
+are considered as potential results).  Symlinks to directories are treated as
+though their targets were located in the directory of the symlink and carry no
+"cost" in terms of search depth.  Chains of symlinks are followed, loops are
+ignored gracefully.  Symbolic link start URLs are always dereferenced,
+regardless of this option.
+
+=item B<-transform> I<Perlcode>
+
+Transform the result URLs before use in the following pipe section or output.
+The I<Perlcode> should operate on C<$_>.  If C<$_> is the empty string or
+undefined after evaluating the expression, the URL is removed from the list of
+results.  The functions that the Perl code fragment can use are slightly
+retricted to prevent it messing up B<wfind>.  B<wfind>'s variables are also not
+visible to it.  However, the functions C<uri_unescape>, C<uri_escape> and
+C<uri_escape_utf8> from the C<URI::Escape> module and C<uri_split> and
+C<uri_join> from C<URI::Split> are available.
+
+Some pertinent variables are also made available.  The array C<@trace> contains
+the URLs via which the current one was reached, with the start URL last.  The
+array C<@linkprops> contains corresponding hashes for the hyperlinks followed,
+which have the entries C<index>, C<indices> (an array reference), C<linktext>
+and C<linktexts> (array).  The arrays are provided in case more than one link
+pointed to the same URL.  If a URL was modified with the B<-transform> option,
+the original URL is also contained in the C<@trace>, and the C<linktext> entry
+contains the transformation expression (the C<indices> array is empty; C<index>
+is -1).  Last, the C<$contentname> scalar contains the filename given in the
+C<Content-Disposition> header if present.
+
+Be aware that like all pipe section options, B<-transform> will be inherited by
+following pipe sections, which in this case is probably not what you want.
+Passing B<-transform> with an empty string as an argument disables
+URL transformations.
+
+Because the transformation is performed only after a URL is tested, lists of
+transformed URLs may contain duplicates if different URLs are transformed to
+the same one.  Currently a URL transformation does not trigger a renewed
+retrieval, so B<-transform> in the last pipe section together with B<-download>
+will not download anything.  An additional pipe section can be used to remove
+duplicates and download the transformed URL, see L</Advanced usage> below.
+
+=item B<-unrestricted>
+
+Follow links from local files to the internet.  Files found in a local
+directory search will still not have their links extracted; use an additional
+pipe section to achieve that (see L</PIPE SECTIONS> above and L</EXAMPLES>
+below).
+
+=item B<-while> I<...>
+
+Stop following links when the associated test becomes false.  The document in
+question may still be reported as a result, i.e. the semantics is that of a
+C<do ... while> loop.  If multiple tests are given, they have to be enclosed in
+parentheses, or only the first will be assigned to B<-while>.  See also
+B<-linktext>.
+
+=back
+
+
+=head2 Subexpression options
+
+The few options scoped by subexpression deal with proximity search requirements
+and a generalisation of the simpler B<-and> and B<-or> operators.  You have to
+be a little careful where to put them:  If you do not put explicit parentheses
+around every subexpression, B<-wfind> will assign the option to the
+subexpression to which the test or operator to its left belongs.
+
+=over
+
+=item B<-charnear> I<distance>
+
+Proximity requirement for the current (sub)expression, in characters.  The
+I<distance> gives the maximum distance between the first and last character
+which are part of phrases matching a sub-test.  Be aware that a character
+proximity requirement may be hard to fulfil if you have greedy wildcards in a
+regular expression.  You should probably use the non-greedy version instead
+(see the L<perlre>) manual page).  A subexpression cannot have a more
+permissive proximity requirement than its superexpression.  B<wfind> will
+adjust the subexpression's proximity requirement automatically if that happens,
+and output a warning.  If both B<-charnear> and B<-wordnear> are given in the
+same subexpression, both requirements have to be met.
+
+=item B<-require> I<number>
+
+This option allows to define a more general logical function than the standard
+B<-and> and B<-or>.  It requires at least the given number of subexpressions to
+be true for the current expression to give a true result.  The B<-and> or
+B<-or> operators in the current expression are ignored and are therefore best
+omitted.  Operator subexpressions must be enclosed in parentheses.
+
+=item B<-wordnear> I<distance>
+
+Proximity requirement for the current (sub)expression, in words.  The
+I<distance> gives the maximum distance between the first and last word
+contributing to true-valued subexpressions.  A I<distance> of 0 means all have
+to be the same word, which allows requiring a word to pass more than one test.
+A subexpression cannot have a more permissive proximity requirement than its
+superexpression.  B<wfind> will adjust the subexpression's proximity
+requirement automatically if that happens, and output a warning.  If both
+B<-charnear> and B<-wordnear> are given in the same subexpression, both
+requirements have to be met.
+
+=back
+
+
+=head1 OUTPUT
+
+=head2 Result reporting
+
+By default, B<wfind> prints the file names or URLs of the documents matching
+the required criteria.  Results are printed as tests are completed, so the
+first results are available as soon as possible.  Results are not sorted,
+neither alphabetically nor in the order in which hyperlinks were encountered,
+and the order is not deterministic.
+
+With the B<-print> option, you can specify additional information to be
+printed.  Except for the trace, the fields are printed as columns in the order
+in which they are documented above.  The trace consists of the URLs which led
+from the start URL to the result and is printed indented in reverse
+chronological order below the result URL.  If no trace is available (for
+instance when the start URL was a result), a remark to that effect is printed.
+Traversal of local or FTP directories does not contribute to the trace.
+
+Besides the results (which are printed to standard output), the number and
+weight of documents that B<wfind> could not test are printed to standard error,
+if applicable.  This comprises documents which could not be retrieved, were
+forbidden to robots or blacklisted, the numbers of which are printed
+separately.  The first category includes retrieval errors, decoding or
+decompression errors, unsupported file formats and dead symbolic links on local
+file systems.
+
+The weight of a document is the weight of its parent multiplied with its share
+among its siblings, which are documents hyperlinked from the same previous
+document or fellow start documents.  This notion is based on the idea of a
+regular tree of hyperlinked documents.  Though real-life hyperlinks rarely form
+trees, let alone regular ones, it gives an estimate of the share of documents
+which may be missed because one was unavailable or forbidden.
+
+When a document cannot be retrieved and content tests are given, it is never
+reported as a result, even if the B<-pessimistic> option is not in effect.  The
+rationale behind this is that the aim of the search is to locate content, so
+returning unavailable URLs is pointless.  Pure link extraction without content
+tests may still return dead links.
+
+
+=head2 Diagnostics
+
+In case of errors in options, B<wfind> outputs the index of the offending
+command-line argument, starting with the first non-URL argument which has index
+0.  (The optional C<--> separator between URLs and tests does not count.)
+Besides the following options are useful to avoid misinterpretation of your
+command line:
+
+To find out what document types and compressoins B<wfind> supports and which
+Perl modules and external programs it uses, use the B<-status> option:
+
+    wfind -status -verbose
+
+(Output is briefer without C<-verbose>.)
+
+If B<wfind> does not do what you expect, you can run it with the B<-echo>
+option to see how B<wfind> interprets your command line:
+
+    wfind ... -echo ...
+
+Executing just C<wfind -echo> without further arguments allows you to see the
+default settings.
+
+Sometimes the MIME type of a given document can depend on the module or program
+used to determine it.  To see what MIME type B<wfind> assigns to a certain
+file, run the following command:
+
+    wfind file -print mime -gdepth 0
+
+
+=head1 PRACTICAL CONSIDERATIONS
+
+=head2 Choosing the right search depth
+
+The default global search depth (across all pipe sections) is 3, the default
+search depth per pipe section is 2.  These numbers may seem small, but in most
+cases it is more sensible to reduce them than to raise them.  Web pages tend to
+have tens of hyperlinks, so a depth of 3 puts thousands within reach.  If all
+or most of them are within the same domain, B<wfind> may run for hours due to
+its holdoff time, depending on how effective your B<-while> tests are at
+pruning unwanted links.
+
+The whole web is said to have a depth of only 15 to 20 hyperlinks, so a number
+in this order of magnitude is definitely too large a depth unless you are very
+restrictive about the URLs you admit.  (These numbers are probably not quite
+correct, as that would imply that there are no more than 20 pages that are
+hyperlinked only serially on the whole web, which is unlikely.  But they are a
+useful range to consider for unrestricted searches.)
+
+The only situations where you should raise the default search depth is in
+searches of (local, HTTP or FTP) directories, where the search cannot run amok.
+For most web searches, a depth of 1 or 2 will probably suffice.
+
+
+=head2 Searching by URL and the structure of websites
+
+Unless you want to do a wholesale search of a complete site, you are going to
+have to tell B<wfind> which links to follow.  In order to create appropriate
+URL tests, do not just look at the links you want to follow, but also at those
+you want to ignore, to avoid leading B<wfind> astray.  Remember that the
+B<-samedomain> option is active for non-search-engine start URLs by default.
+You have to deactivate it to follow links to other sites.
+
+If you want to investigate series of documents (photo pages, comics, serialised
+web fiction etc.), be aware that their URLs may not be entirely consistent.
+Look at several before creating your URL test, and after running B<wfind> sort
+the results and look for gaps.  (Numbering lines with C<nl> can be helpful for
+the latter.)
+
+If you search through hyperlinks from downloaded web pages, remember to give
+the B<-unrestricted> option to allow following these links.  Be aware that
+relative links in downloaded documents can only be followed if you downloaded
+their targets too (unless the document base URL is given in a BASE tag).
+
+
+=head2 Search criteria
+
+A few brief remarks on search terms.  When a search term is given as a simple
+word (not a regular expression or other test), B<wfind> acts similarly as a
+search engine by reducing accented and other composed characters to their base
+character before comparison (see L</Unicode> below for details).  However,
+British and American spelling is still distinguished.  Wildcards can be used to
+allow both spellings:  ...C<i?e> matches both ...ise and ...ize, and ...C<o*>
+matches both ...or and ...our.  Admittedly these search terms admit some
+erroneous matches, especially for shorter words.
+
+Regarding Levenshtein (editing distance) tests, one should be aware that they
+are not for short words.  The proportion of meaningful short words is so large
+that every tested document can be expected to contain one which matches a given
+Levenshtein test.  (Puzzles which require transforming one word into another by
+editing moves attest to that.)  It is less easy to say how long exactly a word
+has to be to count as short in this sense, but words up to four or five
+characters probably qualify.  The usefulness of Levenshtein tests probably
+starts at double that, around ten characters.
+
+Lastly, you should not use wildcard constructions in regular expression tests
+which potentially match text unlimited in length, such as C<.*>.  They may not
+do what you expect.  B<wfind> does not read documents in one go, but tries to
+match them bit by bit as they are parsed.  This imposes a maximum length on
+char-based tests, which can be found in the variable
+C<$globals{"defneedchars"}> in the source code (currently 500).  Instead of
+C<.*>, use two separate regular expression tests for the parts before and after
+it and combine them with the B<-and> operator.  There is a similar implicit
+restriction on the number of words available when applying word-based tests,
+C<$globals{"defneedwords"}>.
+
+
+=head2 Search engine result filtering
+
+Filtering the output of search engines is probably the most difficult
+application of B<wfind>, though it is also one of the most useful.  In order to
+do that, run the search engine and paste the URL of the results page into
+B<wfind>'s command line.  Before you run B<wfind>, make sure the search engine
+does not ban spiders (Google does, for example).
+
+The main difficulty in postprocessing general-purpose search engine results is
+that their result pages contain many links that are not search results.  Most
+are links to ads, other searches and cached pages, all of which also contain
+the search terms.  To exclude some of these (at least), it is helpful not to
+give all of your search terms to the search engine.  (But because not all
+search engine results actually contain the search terms, you should repeat
+those passed to the search engine as arguments of B<wfind>.)  A C<-while> test
+banning links to the domain of the search engine can eliminate suggestions for
+other searches, translations and the like.
+
+Site searches and other special-purpose search engines can be less trouble than
+the general-purpose sort.  Sometimes the result URLs habe the same form (e.g.
+articles from a newspaper or blog) and can be easily filtered.  On the whole,
+there tends to be less clutter.
+
+
+=head1 THE CONFIGURATION DIRECTORY
+
+B<wfind> creates a directory C<.wfind> in the user's home directory.
+Subdirectories are created to cache the retrieved files of each run.  Besides,
+configuration files can be located there, notably C<wfindrc>.
+The C<wfindrc> contains default options which are parsed before command-line
+options and can be overridden by them.  The option names are the same as global
+or pipe section command-line options without the leading hyphen.  Each line of
+the C<wfindrc> can contain one option and its value.  Boolean-valued options
+are switched on by their presence, but may also be followed by one of the
+values C<on>, C<true>, C<yes>, C<1>, C<off>, C<false>, C<no> or C<0> (case
+insensitive).  Comments are started with the C<#> character and extend up to
+the end of the line.
+
+Besides the C<wfindrc>, the configuration directory may contain a subdirectory
+C<urlgroups>.  The files in this directory define a number of URL groups that
+can be used with the B<-urlgroup> test.  These files can contain URL prefixes,
+domain names or include directives.  URL prefixes have to be absolute, i.e.
+start with a scheme such as C<http://>.  Any URL that starts with a prefix from
+the URL group or is in a subdomain of a domain from the URL group is taken to
+be part of that group.  Trailing asterisks after URL prefixes are ignored.
+Include directives start with the word C<include> followed by the name of
+another URL group.  Comments in URL group files start with C<#> and extend up
+to the end of the line.  There are two special URL groups:  C<blacklist>
+defines URLs which B<wfind> should ignore.  And C<shorteners> is a list of URL
+shortening services; B<wfind> follows their redirects before performing URL
+tests.
+
+Even though the B<wfindrc> file is read before the parsing of the command line,
+the command line is briefly scanned for the options B<-verbose> and B<-silent>
+and their negations, so that the parsing of C<wfindrc> and the URL groups can
+be reported accordingly.
+
+
+=head1 PROXIES, AUTHENTICATION AND COOKIES
+
+Through L<LWP>, B<wfind> supports HTTP and FTP proxies set by the environment
+variables C<http_proxy>, C<ftp_proxy> and C<no_proxy>.  Set these variables and
+export them using your shell to make B<wfind> use a proxy.
+
+Some servers allow users to authenticate themselves via parameters in the URL.
+You can use that method with B<wfind> if you reverse-engineer the URL yourself.
+Be aware that the password will then be visible to others on your system via
+the C<ps> program.  With the same caveat, FTP logins can be put in the URL:
+
+    wfind ftp://user:password@ftp.someserver.foo/...  ...
+
+Authentication using challenges from the HTTP server or cookies, and reading
+passwords from the C<.netrc> is not supported by B<wfind> at this time.
+
+
+=head1 EXAMPLES
+
+=head2 Basic usage
+
+Extract hyperlinks from a web page:
+
+    wfind <URL> -nostart -depth 1
+
+Extract all hyperlinks (including external ones) from a downloaded web page:
+
+    wfind file.html -nostart -depth 1 -unrestricted
+
+Find out which Perl manual pages have something to say about arrays:
+
+    wfind /usr/share/man/man1/perl* =array
+
+The C<=> indicates a word test.  It can be omitted, except when there is a file
+or subdirectory called "array" in the current directory, when it would be
+mistaken for a URL (file) argument.  This ambiguity can also be avoided by
+separating tests from URLs with C<-->.  For the search above, is is not
+necessary to restrict the search depth:  Because all the URLs are files and
+groff files contain no hyperlinks, the search depth is effectively zero.
+
+Postprocess search engine results (from Clusty/Yippy), requiring documents on
+Karate to contain the Kanji characters for Karate-do:
+
+    wfind http://search.yippy.com/search?query=karate -depth 1 '/\x{7A7A}\x{624B}\x{9053}/'
+
+This should at least turn up the Wikipedia page.  The command will run for a
+rather long time due to the comparably large number of links from the search
+results page to others in the C<yippy.com> domain.  See below for more advanced
+examples of search engine postprocessing.
+
+
+=head2 Advanced usage
+
+Find the URLs of the 25 latest Dilbert comic strips:
+
+    wfind http://dilbert.com/strips/?Page=[1-5] -depth 1 -follow img.src -url '/strip(?:\.sunday)?\.gif$/'
+
+Add the B<-download> option to retrieve the images.  The pages displaying
+recent comics are named systematically, with each page displaying five strips.
+The comic images themselves end on "strip.gif" or "strip.sunday.gif", unlike
+any other images on these pages.  The B<-follow> option restricts link
+traversal to image URLs embedded with an C<E<lt>img src=...E<gt>> tags, and the
+regex URL test picks out the comic image URLs.
+
+Assume you have a set of URLs some of which link to pages you consider
+interesting.  The interesting hyperlinks all have "bar" in their link text, and
+you are sure only the initial pages containing "foo" link somewhere interesting
+(replace "foo" and "bar" by appropriate phrase).  The following B<wfind>
+command line finds the interesting pages for you:
+
+    wfind <start URLs> -depth 0 foo \| -depth 1 -nostart -linktext bar
+
+The command line has two pipe section, which allows the content test for "foo"
+to be imposed on the start URLs but not the link targets.  The first pipe
+section does not follow links (C<-depth 0>), it only discards the initial URLs
+not containing "foo".  The second pipe section never returns initial URLs as
+results (C<-nostart>), only the targets of links containing "bar" in the link
+text.
+
+Note that the second pipe section follows hyperlinks to other domains.  If you
+wanted to omit the test for "foo", you would have to give the B<-nosamedomain>
+option to get equivalent results in the first pipe section:
+
+    wfind <start URLs> -depth 1 -nostart -nosamedomain -linktext bar
+
+The following command line extracts unique results from the search engine
+dogpile:
+
+    wfind http://www.dogpile.com/dogpile/ws/results/... -nosta -depth 1 \
+    -transform 's!^(?:.*/clickserver/.*rawURL=(.*?)\&.*|.*)$!uri_unescape($1 || "")!e;' \
+    \| -depth 0 -nonosta -transform ""
+
+Because dogpile uses a HTTP POST request to trigger searches, one cannot
+construct a start URL for the search results page.  You have to perform the
+search in your browser (starting from http://www.dogpile.com/) and then copy
+the URL of search results into the comand line.
+
+The first pipe section discards the initial URL (abbreviated C<-nostart>) and
+extracts links (C<-depth 1>).  Dogpile does not provide direct links to the
+result pages, but instead redirects clicks through a URL on its own domain
+starting with C<http://www.dogpile.com/clickserver/>.  The C<-transform> option
+extracts the result URLs (which are present in escaped form) and discards all
+links which do not go to the clickserver and are therefore not results.
+
+The second pipe section serves to make the result URLs unique.  The C<-nostart>
+and C<-transform> options, which would otherwise be inherited from the first
+pipe secion, are negated.  The C<-download> option could be added to retrieve
+and save the documents, or test options could be added to select some of them.
+
+
+=head1 NITTY-GRITTY DETAILS
+
+This section contains details about B<wfind>'s inner workings.  It is intended
+as a last-but-one resort before reading the source code, and as a more precise
+specification of its behaviour than the previous parts of the documentation can
+give.  If B<wfind> works as you expect it to and you would not dream of
+programming something like B<wfind> yourself, you may want to skip this.  On
+the other hand, studying this section is indispensible if you want to
+understand B<wfind> and use it to its full potential.  Threspassers may be
+confused to the edge of sanity and be found semi-concious in a ditch with froth
+in front of their mouths several days later.  You have been warned.
+
+
+=head2 How B<wfind> walks the web
+
+B<wfind> consists of a dispatcher process and several slave processes which
+download and test documents.  The number of slaves is given by the B<-slaves>
+option, and only when its value is zero, no slave processes are used, but the
+main process handles all URLs sequentially.
+
+The main (dispatcher) process maintains a queue of URLs to look at.  Whenever a
+slave process is idle, it looks for a job to assign to it.  Depending on the
+B<-holdoff> option, jobs can be postponed until the holdoff time for their
+server has expired (unless the URL was given on the command line or is
+considered part of a document by a frame or redirect).  If the robots.txt file
+of its server forbids it, it is removed from the queue.  Jobs for retrieving
+robots.txt files themselves are created as needed.  If a URL is to be tested
+again (such as in a different pipe section) or if it does not require a
+retrieval (only URL tests), the holdoff test is skipped.  If a job is ready, it
+is preferentially assigned to a slave which already has a connection to its
+server open.
+
+A slave process waits for jobs sent by the dispatcher.  It retrieves the
+document, performs the tests and extracts hyperlinks.  Taking the results of
+B<-linktext> and B<-while> tests into account, jobs for testing hyperlinked
+URLs are created and passed back to the dispatcher.  For ordinary hyperlinks,
+the remaining recursion depth is decreased by one.  Frames, C<E<lt>layerE<gt>>
+tags and C<E<lt>meta content=...E<gt>> tags are treated as hyperlinks, but the
+depth is not decremented, and no holdoff period is imposed, reflecting the fact
+that these are part of the current document.
+
+The dispatcher process receives the hyperlinked URLs from the slaves and adds
+them to the end of the job queue.  If the link structure is a tree (which it
+rarely is), this results roughly in a breadth-first search.  If a given URL has
+been tested before, the dispatcher finds it in the list of completed jobs and
+transfers its established data to its new job, notably the file name where its
+content is cached if it was already retrieved.  If the tests of a completed job
+evaluated to true (or undefined unless B<-pessimistic> is given), a job is
+moved to the next pipe section or output as a result.
+
+
+=head2 Recursion over directories
+
+Local directories are disqualified as search results.  Subdirectories are
+searched recursively with the remaining search depth decremented (as for
+hyperlinks), while files are considered as results and have their pipe section
+depth set to 0, but their global depth unchanged from their directory.  This
+has the effect that recursion from a directory is restricted to subdirectories
+within the pipe section, but can be continued to hyperlinks of matching
+documents in the following section.
+
+FTP directories are handled as local directories, with recursion restricted to
+subdirectories within the pipe section.  HTTP directory listings are a
+different matter, because there is no sure way to tell when one encounters
+them.  If the B<-httpdirs> option is set (which it is by default), B<wfind>
+employs a heuristic to identify them.  This can only be done after retrieval,
+but subdirectories are tentatively identified by ending in a slash, and the
+search depth is decremented only for them.  Other than that, HTTP directory
+listing pages are parsed normally and may be search results passed on to the
+next section.
+
+
+=head2 How B<wfind> processes documents
+
+B<wfind>'s slave processes perform tests in an order that allows to postpone
+retrieving the document, and possibly avoiding it altogether.  First, URL tests
+are performed, and the logical test expression evaluated as far as possible.
+If the result depends on HTTP header tests, a HEAD request is sent, HTTP header
+tests are performed and the test expression evaluated again.  If the result
+depends on content tests, or if the B<-while> expression has evaluated to true,
+or if the test expression is true and B<-download> is given, the document is
+retrieved.
+
+After retrieval, the data format of the retrieved file is determined, it is
+decoded as applicable and possibly converted into a format that B<wfind> can
+read.  The resulting document is parsed, content tests are performed on the
+text and hyperlinks are extracted.
+
+Elementary content tests are performed as text is parsed, and the positions of
+matches are noted.  Periodically, the expression tree is evaluated, taking the
+proximity options into account.  If the expression can be fully evaluated,
+parsing is aborted.
+
+
+=head2 Encodings and document types
+
+B<wfind> can support a fair number of content encodings and data formats when
+the appropriate Perl modules or external programs are available.  In order to
+avoid dependency hell, it does not require all of those modules and programs to
+be present.  Rather, B<wfind> detects their existence every time it runs, so
+additionally installed modules and programs are available immediately, without
+reinstalling B<wfind>.
+
+After retrieving a document (or after arriving at a specific local file), its
+data type is first determined by inspecting the first part of its contents.
+This is done by B<wfind> itself, ignoring the HTTP Content-Type header, so as
+to be consistent between web documents and local files.  If it is a type that
+B<wfind> can read, the document is parsed; if the type is unknown, the file is
+ignored; if it is a compression or other encoding format, it is decompressed
+and the data type is determined again.  Postscript is special in that it is
+treated like an encoding: it is converted to PDF which is then parsed.
+
+The MIME types used for the B<-type> and B<-rtype> tests are independent of the
+data types for parsing.  B<-type> refers to the contents of the Content-Type
+HTTP header.  It may therefore differ according to the server or even the
+directory on the same site if local server configuration files differ.  For
+compressed documents, it may return the type of the compression (such as
+application/x-bzip2) or the type of the document (such as text/html).
+
+The B<-rtype> test uses the L<File::MimeInfo::Magic> module or the C<file>
+command depending on which is available.  It always tests the decompressed file
+and is therefore independent of the encoding as well as the server, and also
+works on local files.  However, its results may depend on whether
+File::MimeInfo::Magic or the C<file> command is used, and possibly on their
+version.
+
+
+=head2 Unicode
+
+Current versions of Perl support unicode, and so does B<wfind>.  The character
+encoding of a web page is obtained from the Content-Type HTTP header or the
+corresponding HTTP-Equiv meta HTML tag, if present.  Otherwise, ISO-8859-1 is
+used as the default character encoding.  The output of external parsing
+programs such as C<pdftotext> and C<catdoc> is read taking their character
+encoding into account.
+
+Before performing word tests and regular expression tests without the I<v>
+flag, the text is transformed to "base characters".  Accents, cedillas and
+diaereses are removed, and ligatures such as the Scandinavian ae are
+transformed to two ASCII characters.  Punctuation is treated similarly: The
+more than 5 kinds of unicode hyphens are transformed to ASCII, zero-width
+joiners and discretionary hyphens are removed, and glyphs resembling (single or
+multiple) punctuation signs are transformed to (single or multiple) ASCII
+characters.
+
+These transformations make the simpler searches similarly tolerant as internet
+search engines.  The search words (or regexes without the I<v> flag) are also
+transformed, so they may contain non-ASCII characters.  In order to accept
+command-line arguments in UTF-8 encoding, B<wfind> specifies Perl's C<-C>
+option in its interpreter command line (the first line in the script starting
+with C<#!>).  I have known this not to work on one installation; if you get an
+error message regarding this option, remove it and put the following  line in
+your shell resource file (bashrc or equivalent):
+
+    export PERL_UNICODE="SAL"
+
+In addition, your locale has to specify a UTF-8 encoding, so Perl and your
+shell understand each other.
+
+
+=head2 Robot rules
+
+B<wfind> observes the robot excusion standard.  Since the standard is slightly
+open to interpretation, this section gives the details.  If a server provides a
+file robots.txt in its root directory, it is retrieved and parsed before any
+hyperlinks are followed on that server.  URLs disallowed for B<wfind> (or
+whatever you have set as its user agent name) are not retrieved recursively.
+URLs that are explicitly allowed are still retrieved recursively, even if they
+also match disallowed paths, on the grounds that it would be pointless to list
+them as allowed otherwise.
+
+The restrictions by robots.txt are not applied to URLs given on the command
+line.  This reflects the fact that the robot exclusion standard is aimed at
+programs that traverse the web automatically (see L<http://www.robotstxt.org/>)
+and follows the practice of other programs such as B<curl>(1).  Retrieving and
+testing documents explicitly named by the user does not (yet) make B<wfind> a
+crawler.
+
+By default, and if the B<-holdoff> option has a negative argument, B<wfind>
+uses the Crawl-delay entry of robots.txt (if present) as its holdoff time.
+This can actually speed things up: I have seen a fair number of servers that
+set a Crawl-delay of 0.
+
+In order to treat different document types equally, B<wfind> ignores the
+E<lt>meta name="robots" ...E<gt> HTML tag.  Flags such as noindex and nofollow
+have no influence on results and recursion.
+
+
+=head2 Logical functions under proximity requirements
+
+For combining tests in expressions, B<wfind> supports logical AND and OR
+operators as well as general logical operators requiring a minimum number of
+the subexpressions in the expression to be true (with the B<-require> option).
+In addition, proximity requirements may be imposed using the B<-wordnear> and
+B<-charnear> options.
+
+The common AND and OR operators are special cases of a B<-require> operator,
+namely stipulating all or at least one subexpression.  Therefore the following
+will be described in terms of B<-require> operators, which covers everything.
+The proximity options impose the restriction that all required tests not only
+be true for a word in the document, but that these words lie in an interval of
+n+1 words or characters, where n is the argument of the proximity option.  As a
+special case, a proximity condition of B<-wordnear 0> allows imposing several
+tests on the same word.
+
+If one of the required tests is a subexpression, all of its tests' matches must
+also lie within the proximity interval of the superexpression, even if it has a
+proximity option of its own.  The negation of an expression with proximity
+option is true if the required number of tests cannot be fulfilled or if their
+matches do not fit into the proximity interval.
+
+If expressions with proximity options contain tests that do not apply to the
+document text, these (if true) contribute to the required tests but do not
+restrict the proximity interval.  For example, an AND expression with proximity
+option containing one in-text test and one header test effectively has no
+proximity requirement, as the header test does not narrow the interval for the
+text match.  If one such test is undecidable (such as a header test for a
+non-existing header), the overall expression may become undecidable, so that
+the presence of the B<-pessimistic> option may decide about the outcome.
+
+
+=head1 SCAV
+
+B<scav> is a script interface to the B<wfind> spider.  This interface is still
+very experimental, and will undergo incompatible changes.  The underlying
+mechanisms however form the basis of newer versions of B<wfind> and are here to
+stay.
+
+A B<scav> script consists of one or several sections, which are equivalent to
+B<wfind> pipe sections.  A section is a processing unit that applies one or
+several actions to its input URLs.  In B<scav> scripts, a new section is
+started by a line containing only an optional label followed by an obligatory
+colon.  This may be followed by a line or lines of start URLs (not only in the
+first section).  The rest of the section consists of option and action lines.
+Option lines contain only options and always start with a minus sign.  Action
+lines start with the name of an action and are usually followed by test
+expressions and possibly options.  The following actions exist and accept the
+given options (in addition to B<-linktags>, B<-pessimistic> and B<-nostart>
+accepted by all options with a test expression):
+
+=over
+
+=item B<download> I<test...>
+
+Download document to current directory if test is passed.  Accepts options
+B<-decompress>, B<-downxform> and B<-maxresults>.
+
+=item B<feed> I<section> I<test...>
+
+Transfer URLs to a different section if the test evaluates to true.  Allows
+the options B<-transform> and B<-maxresults>.
+
+=item B<filter> I<test...>
+
+Discard URLs not passing the test.
+
+=item B<follow> I<test...>
+
+Follow links in the current URL if test is passed.  Tests are applied to the
+current URL as a precondition for link following, not to the link URLs.
+Internally this action causes the creation of an additional section which
+receives the link URLs as input.  Accepts the options B<-follow>, B<-symlinks>,
+B<-unrestricted>, B<-samedomain>, B<-plainurls>.
+
+=item B<output> I<test...>
+
+Print out the URL (same as B<wfind> results).  Options: B<-print> and
+B<-maxresults>.
+
+=item B<recurse> I<test...>
+
+Follow links and recurse to the previous section label.  Tests are applied to
+the current URL (as for B<-while> on the B<wfind> command line), not the link
+URLs.  Accepts the options B<-follow>, B<-symlinks>, B<-unrestricted>,
+B<-samedomain>, B<-plainurls>.
+
+=item B<transform> I<Perlcode> I<test...>
+
+Transform current URLs.  URLs that fail the tests or for which I<Perlcode>
+returns the empty string or undef will be dropped.  This is a shortcut for a
+B<feed> action with a I<-transform> option immediately followed by a new
+section.
+
+=back
+
+B<wfind>'s pipe section options are almost all action-scoped options in B<scav>
+scripts, except for B<-maxdepth>, B<-asplain>, B<-inline> and B<-httpdirs>.
+They can still be set in a section option line and will then be the default for
+all following actions.  The option B<-download> is not allowed any more as its
+task is performed by the download action.  It is worth noting that the
+B<-depth> option is not an action option of the B<recurse> command, but a
+section option.
+
+B<scav> supports here documents.  If a line contains a word of the form
+C<<<WORD> (where word characters are letters, numbers or the underscore), this
+represents a single command-line word containing the following lines up to and
+excluding a line containing only the C<WORD>.  This helps writing complex Perl
+code for B<-transform>, B<-downxform> and B<-localfile>.  Multiple here
+documents in a line are allowed and must follow in the order in which they are
+referenced.  A here document may be referenced multiple times, which is useful
+for B<-downxform> in conjunction with B<-localfile>.
+
+The script file name on the B<scav> command line is followed by URL arguments,
+an optional double hyphen and general-purpose arguments.  These arguments are
+accessible in the script.  URL arguments are referred to by C<@0>, C<@1> and so
+on and may be used on start URL lines, but may not be mixed with explicit URLs.
+C<@2@> can be used to denote all URL arguments starting from the third, and
+C<@@> is the same as C<@0@> (all URL arguments).  General-purpose arguments are
+denoted by C<$0>, C<$1> and so on, or C<%0>, C<%1> to have them URL encoded for
+creating GET form submissions.  C<$2@>, C<%1@> and similar constructs denote
+all general arguments starting from the one implied.
+
+URLs and arguments of options and tests may contain spaces if they (or part of
+them) are quoted by single or double quotes.  General-purpose arguments are not
+interpolated inside single quotes.  There is no backslash escaping of
+delimiting quotes; you have to close the quoted substring and enclose the quote
+character in the other type of quotes.
+
+The global options B<-silent>, B<-verbose>, B<-echo>, B<-version> and
+B<-status> have to precede the script file name on the B<scav> command line.
+B<-echo> displays the internal representation of the script's sections and
+actions and their options.  In order to see a B<wfind> command in the same
+representation, use the option B<-scavecho>.
+
+
+=head1 SEE ALSO
+
+B<find>(1), B<grep>(1), B<bool>(1), B<curl>(1), B<wget>(1), B<perlre>(1)
+
+
+=head1 COPYLEFT
+
+B<wfind> is (c) 2008-2014 Volker Schatz.  It is free software and may be
+copied and/or modified according to the Gnu General Public Licence version 3
+or later (see L<http://www.gnu.org/licenses/gpl.html>).
+
+=cut
+
